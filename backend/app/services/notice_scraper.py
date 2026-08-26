@@ -61,8 +61,12 @@ _keyword_in_title = keyword_in_title
 
 
 def _is_relevant(title: str) -> bool:
-    """BTC/USDT/Lightning 관련 공지이거나 거래소 전체 주요 공지인지 판단"""
-    return is_relevant_title(title)
+    """국내 거래소 공지 관련성 판단: 공통 키워드 + 수수료 특화 키워드
+
+    수수료 이벤트 공지(코인원 '전 종목 거래 수수료 0원' 등)는 실제 수수료 계산에
+    반영되므로, 어드민 공지 피드에서 사람이 교차검증할 수 있도록 함께 노출한다.
+    """
+    return is_relevant_title(title, include_fee=True)
 
 
 def _is_relevant_for_binance(title: str) -> bool:

@@ -210,3 +210,51 @@ def test_sell_disabled_paths_deduplication():
     # 같은 (USDT, TRC20, 한도초과) disabled가 여러 한국 거래소마다 반복 추가되지 않아야 함
     disabled_reasons = [(d['transfer_coin'], d['network'], d['reason']) for d in result['disabled_paths']]
     assert len(disabled_reasons) == len(set(disabled_reasons)), f'중복 disabled_paths 존재: {disabled_reasons}'
+
+
+def test_coinone_sell_fee_carries_voucher_note():
+    """코인원 바우처 이벤트 진행 중이면 국내 매도 수수료 항목에 note가 실린다.
+
+    note는 프론트 결과 페이지에서 배지로 노출되므로, 실제 경로 계산 결과의
+    breakdown까지 값이 전달되는지를 엔드투엔드로 확인한다.
+    """
+    # Arrange
+    run = _make_run()
+    global_ticker = _make_ticker('binance', 100_000.0, currency='USD', taker_pct=0.1)
+    # 코인원은 이벤트로 taker 0%, 업비트는 평시 수수료 → 배지가 코인원에만 붙는지 대조
+    coinone_ticker = _make_ticker('coinone', 150_000_000.0, taker_pct=0.0)
+    upbit_ticker = _make_ticker('upbit', 150_000_000.0, taker_pct=0.05)
+    btc_wds = [
+        _make_withdrawal('coinone', 'BTC', 'Bitcoin (On-chain)', 0.0009, fee_krw=135_000.0),
+        _make_withdrawal('upbit', 'BTC', 'Bitcoin (On-chain)', 0.0009, fee_krw=135_000.0),
+    ]
+
+    promo = {'taker_fee_pct': 0.0, 'requires_voucher': True}
+
+    # Act
+    with patch('backend.app.domain.path_helpers.fetch_coinone_fee_promo', return_value=promo), \
+         patch('backend.app.domain.paths_sell._estimate_wallet_btc_network_fee', return_value=_mock_wallet_fee(0.00001)):
+        result = find_cheapest_sell_path_from_snapshot_rows(
+            0.5,
+            'binance',
+            run,
+            ticker_rows=[global_ticker, coinone_ticker, upbit_ticker],
+            withdrawal_rows=btc_wds,
+            network_rows=[],
+        )
+
+    # Assert
+    assert 'error' not in result, f'에러 발생: {result}'
+
+    def _sell_notes(exchange: str) -> list:
+        return [
+            c['note']
+            for p in result['all_paths'] if p['korean_exchange'] == exchange
+            for c in p['breakdown']['components'] if c['label'] == '국내 BTC 매도 수수료'
+        ]
+
+    coinone_notes = _sell_notes('coinone')
+    assert coinone_notes, '코인원 매도 경로가 없음'
+    assert all('바우처' in note for note in coinone_notes), f'코인원 note 누락: {coinone_notes}'
+    # 다른 거래소에는 붙지 않아야 한다
+    assert _sell_notes('upbit') == [None] * len(_sell_notes('upbit'))

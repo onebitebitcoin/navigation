@@ -19,7 +19,11 @@ from backend.app.domain.path_graph import (
     korea_buy_leg,
     withdraw_leg,
 )
-from backend.app.domain.path_helpers import is_suspended, normalize_usdt_network
+from backend.app.domain.path_helpers import (
+    coinone_voucher_note,
+    is_suspended,
+    normalize_usdt_network,
+)
 from backend.app.domain.korea_exchange_registry import get_withdrawal_limits
 from backend.app.domain.paths.base import (
     BuilderContext,
@@ -72,7 +76,10 @@ def iter_btc_entries(
         num_txs = 1
         label_override = '국내 BTC 출금 수수료'
 
-    buy = korea_buy_leg(bctx.amount_krw, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate)
+    buy = korea_buy_leg(
+        bctx.amount_krw, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate,
+        note=coinone_voucher_note(exchange),
+    )
 
     for row in ctx.withdrawals_by_key.get((exchange, 'BTC'), []):
         is_disabled = False
@@ -169,7 +176,10 @@ def iter_usdt_entries(
 
     korean_taker = _get_korean_taker(ticker_row, exchange)
     # USDT 매수 수량만 한국 USDT/KRW 실거래가(원달러 프리미엄 발생 지점). 수수료 환산은 포렉스.
-    buy = korea_buy_leg(bctx.amount_krw, korean_taker, 0.0, 'USDT', ctx.usdt_buy_krw_rate)
+    buy = korea_buy_leg(
+        bctx.amount_krw, korean_taker, 0.0, 'USDT', ctx.usdt_buy_krw_rate,
+        note=coinone_voucher_note(exchange),
+    )
 
     for row in ctx.withdrawals_by_key.get((exchange, 'USDT'), []):
         is_disabled = False

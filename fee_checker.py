@@ -7,6 +7,7 @@ BTC/USDT 실시간 시세, 거래 수수료, 네트워크별 출금 수수료 �
 
 import argparse
 import asyncio
+import html
 import json
 import os
 import re
@@ -1294,6 +1295,138 @@ def check_maintenance_status(exchanges=None) -> dict:
         return {ex: scraped.get(ex, []) for ex in exchanges}
     except Exception:
         return {}
+
+
+# ══════════════════════════════════════════════════════════════
+# 코인원 거래 수수료 프로모션 감지 (1h TTL)
+# ══════════════════════════════════════════════════════════════
+
+FEE_PROMO_CACHE_TTL_HOURS = 1
+
+COINONE_NOTICE_LIST_URL = (
+    "https://api-gateway.coinone.co.kr/notice/v1/announcements/posts"
+    "?includePin=false&page=0&pageSize=30"
+)
+COINONE_NOTICE_DETAIL_URL = "https://api-gateway.coinone.co.kr/notice/v1/announcements/posts/{notice_id}"
+COINONE_NOTICE_PAGE_URL = "https://coinone.co.kr/info/notice/{notice_id}"
+COINONE_NOTICE_HEADERS = {**HEADERS, "Referer": "https://coinone.co.kr/"}
+
+# 공지 본문 표기 예: "- 수수료율 : Maker 0% / Taker 0%"
+FEE_PROMO_RATE_PATTERN = re.compile(
+    r"Maker\s*(\d+(?:\.\d+)?)\s*%\s*/\s*Taker\s*(\d+(?:\.\d+)?)\s*%", re.IGNORECASE
+)
+_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+
+
+def _strip_html(content: str) -> str:
+    """공지 본문 HTML에서 태그/엔티티를 걷어내고 평문으로 변환"""
+    return html.unescape(_HTML_TAG_PATTERN.sub(" ", content or ""))
+
+
+def _find_fee_promo_notices(notices: list) -> list:
+    """진행 중(INPROGRESS)인 수수료 이벤트 공지를 updatedAt 최신순으로 반환"""
+    matched = []
+    for item in notices:
+        title = (item.get("title") or "").strip()
+        event = item.get("eventInformation")
+        if "수수료" not in title or not isinstance(event, dict):
+            continue
+        if event.get("eventStatus") != "INPROGRESS":
+            continue
+        matched.append(item)
+    matched.sort(key=lambda item: item.get("updatedAt") or 0, reverse=True)
+    return matched
+
+
+def _parse_coinone_fee_promo(notice: dict) -> Optional[dict]:
+    """공지 상세 본문에서 프로모션 수수료율을 파싱. 표기가 없으면 None."""
+    notice_id = notice.get("id")
+    r = requests.get(
+        COINONE_NOTICE_DETAIL_URL.format(notice_id=notice_id),
+        headers=COINONE_NOTICE_HEADERS,
+        timeout=TIMEOUT,
+    )
+    if r.status_code != 200:
+        raise ValueError(f"Coinone 공지 상세 오류: {r.status_code}")
+    content = _strip_html((r.json().get("body") or {}).get("content"))
+    m = FEE_PROMO_RATE_PATTERN.search(content)
+    if not m:
+        return None
+    return {
+        "maker_fee_pct": float(m.group(1)),
+        "taker_fee_pct": float(m.group(2)),
+        # 바우처 발급이 전제 조건인 이벤트인지 (공지 본문 언급 여부)
+        "requires_voucher": "바우처" in content,
+        "notice_id": notice_id,
+        "notice_title": (notice.get("title") or "").strip(),
+        "source_url": COINONE_NOTICE_PAGE_URL.format(notice_id=notice_id),
+    }
+
+
+def _scrape_coinone_fee_promo() -> Optional[dict]:
+    """코인원 공지 API에서 진행 중인 거래 수수료 프로모션을 조회"""
+    r = requests.get(COINONE_NOTICE_LIST_URL, headers=COINONE_NOTICE_HEADERS, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise ValueError(f"Coinone 공지 목록 오류: {r.status_code}")
+    notices = (r.json().get("body") or {}).get("notices") or []
+    for notice in _find_fee_promo_notices(notices):
+        try:
+            promo = _parse_coinone_fee_promo(notice)
+        except Exception as e:
+            # 상세 1건 실패가 나머지 후보 탐색을 막지 않도록 건너뛴다.
+            print(f"[coinone] 공지 {notice.get('id')} 상세 파싱 실패: {e}", file=sys.stderr)
+            continue
+        if promo:
+            return promo
+    return None
+
+
+def _is_fee_promo_cache_valid(cache: dict, exchange: str) -> bool:
+    try:
+        checked_at = cache.get("fee_promo", {}).get(exchange, {}).get("checked_at")
+        if not checked_at:
+            return False
+        return datetime.now() - datetime.fromisoformat(checked_at) < timedelta(hours=FEE_PROMO_CACHE_TTL_HOURS)
+    except Exception:
+        return False
+
+
+def fetch_coinone_fee_promo() -> Optional[dict]:
+    """
+    코인원에서 진행 중인 거래 수수료 프로모션의 실제 적용 수수료율을 조회합니다.
+    결과는 1시간 TTL로 캐시됩니다.
+
+    Returns:
+        {"maker_fee_pct": 0.0, "taker_fee_pct": 0.0, "requires_voucher": True,
+         "notice_id": 5695, "notice_title": "...", "source_url": "...",
+         "checked_at": "..."}
+        진행 중인 프로모션이 없거나 조회/파싱에 실패하면 None.
+        하드코딩 fallback은 두지 않는다 — 근거를 못 찾으면 호출부가 정적 수수료를 쓴다.
+    """
+    try:
+        cache = _load_cache()
+
+        if _is_fee_promo_cache_valid(cache, "coinone"):
+            entry = cache.get("fee_promo", {}).get("coinone", {})
+            return entry if "taker_fee_pct" in entry else None
+
+        try:
+            promo = _scrape_coinone_fee_promo()
+        except Exception as e:
+            print(f"[coinone] 거래 수수료 프로모션 조회 실패: {e}", file=sys.stderr)
+            promo = None
+
+        # 프로모션이 없거나 실패한 경우에도 checked_at을 남겨 TTL 내 재호출을 막는다.
+        entry = {**(promo or {}), "checked_at": datetime.now().isoformat()}
+        fee_promo = cache.get("fee_promo", {})
+        fee_promo["coinone"] = entry
+        cache["fee_promo"] = fee_promo
+        _save_cache(cache)
+
+        return entry if promo else None
+    except Exception as e:
+        print(f"[coinone] 거래 수수료 프로모션 캐시 처리 실패: {e}", file=sys.stderr)
+        return None
 
 
 def get_scraped_withdrawal(exchange: str, coin: str) -> list:

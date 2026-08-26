@@ -35,12 +35,16 @@ MAJOR_KEYWORDS: tuple[str, ...] = (
     '거래소 점검', '거래소점검',
     '긴급 점검', '긴급점검',
 )
-# 수수료 특화 키워드 (Binance 등 수수료 이벤트 공지용)
+# 수수료 특화 키워드 (Binance·국내 거래소 수수료 이벤트 공지용)
 FEE_KEYWORDS: tuple[str, ...] = (
     'zero fee', 'zero-fee', '0% fee', '0% maker', '0% taker',
     'fee promotion', 'fee update', 'trading fee',
     'fee structure', 'fee change', 'fee rate', 'fee waiver',
     'FDUSD',
+    # 국내 거래소 수수료 이벤트 (예: 코인원 '전 종목 거래 수수료 0원!').
+    # '거래 수수료'는 '거래 수수료 0원'·'거래 수수료 무료'를 모두 포괄하며,
+    # 알트코인 출금 수수료 공지는 걸러낸다.
+    '거래 수수료', '수수료율', '수수료 무료', '수수료 이벤트', '수수료 0원', '바우처',
 )
 
 

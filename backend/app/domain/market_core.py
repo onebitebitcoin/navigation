@@ -19,6 +19,7 @@ from fee_checker import (
     fetch_coinbase_withdrawal,
     fetch_coinbase,
     fetch_coinone,
+    fetch_coinone_fee_promo,
     fetch_gopax,
     fetch_gopax_withdrawal,
     fetch_kraken_withdrawal,
@@ -101,6 +102,7 @@ __all__ = [
     'fetch_coinbase',
     'fetch_coinbase_withdrawal',
     'fetch_coinone',
+    'fetch_coinone_fee_promo',
     'fetch_gopax',
     'fetch_gopax_withdrawal',
     'fetch_kraken',
@@ -137,6 +139,15 @@ def get_ticker_data(exchange: str) -> dict | list[dict]:
     if exchange in KOREA_FETCHERS:
         ticker = KOREA_FETCHERS[exchange]()
         fees = TRADING_FEES[exchange]
+        maker_fee_pct = fees['maker'] * 100
+        taker_fee_pct = fees['taker'] * 100
+        # 진행 중인 수수료 프로모션 공지가 확인되면 정적 등급표 대신 공지 파싱값을 쓴다.
+        # 프로모션이 없거나 조회 실패면 None → 정적값 유지(하드코딩 fallback 없음).
+        if exchange == 'coinone':
+            promo = fetch_coinone_fee_promo()
+            if promo:
+                maker_fee_pct = promo['maker_fee_pct']
+                taker_fee_pct = promo['taker_fee_pct']
         return {
             'exchange': exchange,
             'pair': f"BTC/{ticker.get('currency', 'KRW')}",
@@ -146,8 +157,8 @@ def get_ticker_data(exchange: str) -> dict | list[dict]:
             'low_24h': ticker.get('low'),
             'volume_24h_btc': ticker.get('volume'),
             'currency': ticker.get('currency', 'KRW'),
-            'maker_fee_pct': fees['maker'] * 100,
-            'taker_fee_pct': fees['taker'] * 100,
+            'maker_fee_pct': maker_fee_pct,
+            'taker_fee_pct': taker_fee_pct,
         }
     if exchange in GLOBAL_FETCHERS:
         results = []

@@ -80,6 +80,8 @@ export type CheapestPathFeeComponent = {
   move_amount_krw?: number | null;
   // 출금 컴포넌트의 출금 네트워크 (예: TRC20, Bitcoin, Lightning)
   network?: string | null;
+  // 이 수수료에 붙는 조건 안내 (예: 바우처 발급 시 무료) — 있을 때만 배지로 노출
+  note?: string | null;
 };
 
 export type CheapestPathBreakdown = {

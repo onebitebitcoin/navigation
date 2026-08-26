@@ -3,7 +3,30 @@ from __future__ import annotations
 
 import logging
 
+from backend.app.domain.market_core import fetch_coinone_fee_promo
+
 logger = logging.getLogger(__name__)
+
+# 바우처 발급이 전제인 수수료 이벤트의 안내 문구 (프론트 배지로 노출).
+VOUCHER_NOTE = '바우처 발급 시 무료 (코인원 이벤트, 앱/웹에서 바우처 발급 필요)'
+
+
+def coinone_voucher_note(exchange: str | None) -> str | None:
+    """코인원 바우처 조건부 수수료 이벤트 안내 문구. 해당 없으면 None.
+
+    코인원이 '전 종목 거래 수수료 0원'처럼 바우처 발급을 전제로 하는 이벤트를
+    진행 중일 때만 문구를 반환한다. 수수료율 자체는 이미 크롤 시점에 티커로
+    반영되므로, 여기서는 '조건부'라는 사실만 사용자에게 알린다.
+
+    fetch_coinone_fee_promo()는 1시간 TTL **파일** 캐시라 호출마다 디스크를 읽는다.
+    경로 후보마다 호출하지 말고 거래소 루프당 1회만 호출해 note를 재사용할 것.
+    """
+    if (exchange or '').lower() != 'coinone':
+        return None
+    promo = fetch_coinone_fee_promo()
+    if promo and promo.get('requires_voucher'):
+        return VOUCHER_NOTE
+    return None
 
 
 def normalize_usdt_network(label: str) -> str:
@@ -152,6 +175,7 @@ def fee_component(
     move_coin: str | None = None,
     move_amount_krw: int | None = None,
     network: str | None = None,
+    note: str | None = None,
 ) -> dict:
     """수수료 구성요소 딕셔너리 생성.
 
@@ -161,6 +185,8 @@ def fee_component(
 
     move_amount/move_coin/move_amount_krw: 이 단계에서 '이동하는 본체 수량'과 원화 환산값.
     결과 페이지에서 "몇 USDT/BTC를 옮겼고 원화로 얼마치인지"를 단계별로 표시하기 위함.
+
+    note: 이 수수료에 붙는 조건 안내(예: 바우처 발급 시 무료). 결과 페이지에서 배지로 노출.
     """
     if rate_pct is None and input_krw and input_krw > 0:
         rate_pct = amount_krw / input_krw * 100
@@ -176,4 +202,5 @@ def fee_component(
         'move_coin': move_coin,
         'move_amount_krw': move_amount_krw,
         'network': network,
+        'note': note,
     }

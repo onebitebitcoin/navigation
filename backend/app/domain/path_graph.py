@@ -60,10 +60,12 @@ def korea_buy_leg(
     korean_price: float,
     target_asset: str,
     usd_krw_rate: float,
+    note: str | None = None,
 ) -> Leg:
     """KRW → BTC 또는 USDT 매수 엣지.
 
     target_asset: 'BTC' 이면 한국 KRW 시세 기준, 'USDT'면 usd_krw_rate 기준.
+    note: 매수 수수료에 붙는 조건 안내(예: 코인원 바우처 이벤트). 호출부가 계산해 전달.
     Returns Leg(amount_out=구매한 코인 수량, fee_krw=거래 수수료)
     """
     trading_fee_krw = round(amount_krw * korean_taker)
@@ -83,6 +85,7 @@ def korea_buy_leg(
         move_amount=amount_out,
         move_coin=target_asset,
         move_amount_krw=move_krw,
+        note=note,
     )
     return Leg(amount_out=amount_out, fee_krw=trading_fee_krw, components=[comp])
 
@@ -248,10 +251,12 @@ def korea_sell_leg(
     korean_price: float,
     source_asset: str,
     usd_krw_rate: float,
+    note: str | None = None,
 ) -> Leg:
     """자산 → KRW 매도 엣지 (매도 방향).
 
     source_asset: 'BTC'이면 korean_price(원화 시세) 기준, 'USDT'면 usd_krw_rate 기준.
+    note: 매도 수수료에 붙는 조건 안내(예: 코인원 바우처 이벤트). 호출부가 계산해 전달.
     Returns Leg(amount_out=수령 KRW, fee_krw=매도 수수료).
     """
     if source_asset == 'BTC':
@@ -270,6 +275,7 @@ def korea_sell_leg(
         rate_pct=korean_taker * 100,
         amount_text=f'{round(amount_asset, 8)} {source_asset}',
         is_fixed=False,
+        note=note,
     )
     return Leg(amount_out=krw_out, fee_krw=sell_fee_krw, components=[comp])
 

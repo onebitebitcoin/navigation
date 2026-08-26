@@ -15,7 +15,12 @@ from backend.app.domain.path_graph import (
     swap_leg,
     withdraw_leg,
 )
-from backend.app.domain.path_helpers import _build_path_id, fee_component, is_suspended
+from backend.app.domain.path_helpers import (
+    _build_path_id,
+    coinone_voucher_note,
+    fee_component,
+    is_suspended,
+)
 from backend.app.domain.paths_context import SnapshotContext, build_snapshot_context
 from backend.app.domain.paths_buy import _build_available_filters
 
@@ -201,6 +206,8 @@ def find_cheapest_sell_path_from_snapshot_rows(
 
         korean_btc_price_krw = float(ticker_row.price)
         korean_taker = (ticker_row.taker_fee_pct / 100) if ticker_row.taker_fee_pct is not None else TRADING_FEES[exchange]['taker']
+        # 거래소당 1회만 조회 (파일 캐시라 경로마다 부르면 디스크를 반복해서 읽는다)
+        voucher_note = coinone_voucher_note(exchange)
 
         # ----- 경로 1: BTC 직접 (개인지갑 BTC → 온체인 → 국내 BTC 매도) -----
         for row in ctx.withdrawals_by_key.get((exchange, 'BTC'), []):
@@ -219,7 +226,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
             if btc_after_network <= 0:
                 continue
 
-            sell = korea_sell_leg(btc_after_network, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate)
+            sell = korea_sell_leg(btc_after_network, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate, note=voucher_note)
             krw_received = sell.amount_out
             korean_sell_fee_krw = sell.fee_krw
             total_fee_krw = wallet_network_fee_krw + korean_sell_fee_krw
@@ -235,7 +242,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                 total_fee_krw=total_fee_krw,
                 breakdown_components=[
                     fee_component('개인지갑 BTC 네트워크 수수료', wallet_network_fee_krw, amount_text=wallet_fee_amount_text, source_url=wallet_fee_estimate['source_url']),
-                    fee_component('국내 BTC 매도 수수료', korean_sell_fee_krw, rate_pct=korean_taker * 100, amount_text=f'{round(btc_after_network, 8)} BTC'),
+                    fee_component('국내 BTC 매도 수수료', korean_sell_fee_krw, rate_pct=korean_taker * 100, amount_text=f'{round(btc_after_network, 8)} BTC', note=voucher_note),
                 ],
             ))
 
@@ -276,7 +283,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                 continue
 
             # 국내 USDT → KRW 전환
-            ksell = korea_sell_leg(usdt_at_korean, korean_taker, korean_btc_price_krw, 'USDT', ctx.usd_krw_rate)
+            ksell = korea_sell_leg(usdt_at_korean, korean_taker, korean_btc_price_krw, 'USDT', ctx.usd_krw_rate, note=voucher_note)
             krw_received = ksell.amount_out
             korean_sell_fee_krw = ksell.fee_krw
 
@@ -298,7 +305,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                     fee_component('개인지갑 BTC 네트워크 수수료', wallet_network_fee_krw, amount_text=wallet_fee_amount_text, source_url=wallet_fee_estimate['source_url']),
                     fee_component('해외 BTC 매도 수수료', global_sell_fee_krw, rate_pct=ctx.global_taker * 100, amount_text=f'{round(gross_usdt, 8)} USDT'),
                     fee_component('USDT 전송 수수료', usdt_transfer_fee_krw, amount_text=f'{row.fee} USDT', source_url=get_withdrawal_source_url(global_exchange, 'USDT', row.network_label)),
-                    fee_component('국내 KRW 전환 수수료', korean_sell_fee_krw, rate_pct=korean_taker * 100, amount_text=f'{round(usdt_at_korean, 8)} USDT'),
+                    fee_component('국내 KRW 전환 수수료', korean_sell_fee_krw, rate_pct=korean_taker * 100, amount_text=f'{round(usdt_at_korean, 8)} USDT', note=voucher_note),
                 ],
             ))
 
@@ -315,6 +322,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                     continue
                 korean_btc_price_krw = float(ticker_row.price)
                 korean_taker = (ticker_row.taker_fee_pct / 100) if ticker_row.taker_fee_pct is not None else TRADING_FEES[exchange]['taker']
+                voucher_note = coinone_voucher_note(exchange)
 
                 cap = capability_by_exchange.get(exchange)
                 korean_has_lightning = cap.supports_lightning_deposit if cap is not None else False
@@ -336,7 +344,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                     continue
 
                 # ----- 경로 3: lightning_direct (LN → 국내 BTC 매도) -----
-                sell = korea_sell_leg(btc_at_korean, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate)
+                sell = korea_sell_leg(btc_at_korean, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate, note=voucher_note)
                 krw_received = sell.amount_out
                 korean_sell_fee_krw = sell.fee_krw
                 total_fee_krw = wallet_network_fee_krw + swap_fee_krw + korean_sell_fee_krw
@@ -356,7 +364,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                     breakdown_components=[
                         fee_component('개인지갑 BTC 네트워크 수수료', wallet_network_fee_krw, amount_text=wallet_fee_amount_text, source_url=wallet_fee_estimate['source_url']),
                         fee_component(f'라이트닝 스왑 수수료 ({swap.service_name})', swap_fee_krw, rate_pct=swap.fee_pct, amount_text=f'{round(swap_fee_btc, 8)} BTC'),
-                        fee_component('국내 BTC 매도 수수료', korean_sell_fee_krw, rate_pct=korean_taker * 100, amount_text=f'{round(btc_at_korean, 8)} BTC'),
+                        fee_component('국내 BTC 매도 수수료', korean_sell_fee_krw, rate_pct=korean_taker * 100, amount_text=f'{round(btc_at_korean, 8)} BTC', note=voucher_note),
                     ],
                 ))
 
@@ -396,7 +404,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                         continue
 
                     # 국내 USDT → KRW 전환
-                    ksell = korea_sell_leg(usdt_at_korean, korean_taker, korean_btc_price_krw, 'USDT', ctx.usd_krw_rate)
+                    ksell = korea_sell_leg(usdt_at_korean, korean_taker, korean_btc_price_krw, 'USDT', ctx.usd_krw_rate, note=voucher_note)
                     krw_received_ln = ksell.amount_out
                     korean_sell_fee_krw_ln = ksell.fee_krw
 
@@ -418,7 +426,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                             fee_component(f'라이트닝 스왑 수수료 ({swap.service_name})', swap_fee_krw, rate_pct=swap.fee_pct, amount_text=f'{round(swap_fee_btc, 8)} BTC'),
                             fee_component('해외 BTC 매도 수수료', global_sell_fee_krw, rate_pct=ctx.global_taker * 100, amount_text=f'{round(gross_usdt, 8)} USDT'),
                             fee_component('USDT 전송 수수료', usdt_transfer_fee_krw, amount_text=f'{row.fee} USDT', source_url=get_withdrawal_source_url(global_exchange, 'USDT', row.network_label)),
-                            fee_component('국내 KRW 전환 수수료', korean_sell_fee_krw_ln, rate_pct=korean_taker * 100, amount_text=f'{round(usdt_at_korean, 8)} USDT'),
+                            fee_component('국내 KRW 전환 수수료', korean_sell_fee_krw_ln, rate_pct=korean_taker * 100, amount_text=f'{round(usdt_at_korean, 8)} USDT', note=voucher_note),
                         ],
                     ))
 

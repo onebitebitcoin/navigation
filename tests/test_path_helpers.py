@@ -122,3 +122,12 @@ class TestFeeComponent:
     def test_source_url_included(self):
         result = fee_component('수수료', 0, source_url='https://example.com')
         assert result['source_url'] == 'https://example.com'
+
+    def test_note_defaults_to_none(self):
+        # note를 넘기지 않는 기존 호출부는 키가 있되 값이 None이어야 한다(하위호환).
+        result = fee_component('수수료', 1000)
+        assert result['note'] is None
+
+    def test_note_included(self):
+        result = fee_component('수수료', 0, note='바우처 발급 시 무료')
+        assert result['note'] == '바우처 발급 시 무료'

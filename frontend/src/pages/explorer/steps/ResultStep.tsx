@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, ArrowRight, CaretDown, Wrench, WarningCircle, ArrowSquareOut } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowRight, CaretDown, Wrench, WarningCircle, ArrowSquareOut, Ticket } from '@phosphor-icons/react';
 import { NetworkIcon } from '../../../components/NetworkIcon';
 import { fmtEx } from '../../../lib/exchangeNames';
 import { formatNetworkLabel } from '../../../lib/networkIcons';
@@ -360,6 +360,15 @@ export function ResultStep() {
                                         : 'bg-acc-amber/10 text-acc-amber'
                                     }`}>
                                     {c.is_fixed ? '고정 수수료' : '비율 수수료'}
+                                  </span>
+                                )}
+                                {c.note && (
+                                  <span
+                                    title={c.note}
+                                    className="inline-flex items-start gap-1 max-w-full text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-acc-green/10 text-acc-green leading-relaxed"
+                                  >
+                                    <Ticket className="w-2.5 h-2.5 shrink-0 mt-[2px]" weight="bold" />
+                                    <span>{c.note}</span>
                                   </span>
                                 )}
                               </div>

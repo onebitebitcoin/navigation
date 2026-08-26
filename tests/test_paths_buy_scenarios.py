@@ -10,6 +10,7 @@ SimpleNamespace + 실수치 + 명시적 direction 사용.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -623,3 +624,53 @@ def test_best_path_and_top5_exclude_disabled():
     assert not result["best_path"].get("disabled")
     for p in result["top5"]:
         assert not p.get("disabled")
+
+
+# ── 코인원 바우처 이벤트 배지 (note) ──────────────────────────────────────────
+
+def test_coinone_buy_fee_carries_voucher_note():
+    """코인원 바우처 이벤트 진행 중이면 국내 매수 수수료 항목에 note가 실린다.
+
+    note는 프론트 결과 페이지에서 배지로 노출되므로, 실제 경로 계산 결과의
+    breakdown까지 값이 전달되는지를 엔드투엔드로 확인한다.
+    """
+    # Arrange — 코인원(이벤트로 taker 0%)과 업비트(평시)를 함께 넣어 대조
+    tickers = [
+        _ticker("coinone", KRW_PER_BTC, taker_fee_pct=0.0),
+        _ticker("upbit", KRW_PER_BTC),
+        _ticker("binance", BTC_USD, currency="USD", taker_fee_pct=0.1),
+    ]
+    withdrawals = [
+        _wd("coinone", "BTC", "Bitcoin", 0.0009, fee_krw=126_000),
+        _wd("upbit", "BTC", "Bitcoin", 0.0009, fee_krw=126_000),
+        _wd("coinone", "USDT", "Tron (TRC20)", 1.0, fee_krw=1_400),
+        _wd("upbit", "USDT", "Tron (TRC20)", 1.0, fee_krw=1_400),
+        _wd("binance", "BTC", "Bitcoin", 0.00002, fee_krw=2_800),
+        _wd("binance", "USDT", "Tron (TRC20)", 1.0, fee_krw=1_400),
+    ]
+    promo = {"taker_fee_pct": 0.0, "requires_voucher": True}
+
+    # Act
+    with patch("backend.app.domain.path_helpers.fetch_coinone_fee_promo", return_value=promo):
+        result = find_cheapest_path_from_snapshot_rows(
+            amount_krw=10_000_000,
+            global_exchange="binance",
+            latest_run=_run(),
+            ticker_rows=tickers,
+            withdrawal_rows=withdrawals,
+            network_rows=[],
+            lightning_swap_rows=[],
+        )
+
+    # Assert
+    def _buy_notes(exchange):
+        return [
+            c["note"]
+            for p in result["all_paths"] if p["korean_exchange"] == exchange
+            for c in p["breakdown"]["components"] if c["label"] == "국내 매수 수수료"
+        ]
+
+    coinone_notes = _buy_notes("coinone")
+    assert coinone_notes, "코인원 매수 경로가 없음"
+    assert all("바우처" in note for note in coinone_notes), f"코인원 note 누락: {coinone_notes}"
+    assert all(note is None for note in _buy_notes("upbit"))
