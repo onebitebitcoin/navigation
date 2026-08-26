@@ -25,6 +25,7 @@ from fee_checker import (
     fetch_kraken_withdrawal,
     fetch_kraken,
     fetch_korbit,
+    fetch_korbit_fee_promo,
     fetch_okx_perp,
     fetch_okx_spot,
     fetch_okx_withdrawal,
@@ -108,6 +109,7 @@ __all__ = [
     'fetch_kraken',
     'fetch_kraken_withdrawal',
     'fetch_korbit',
+    'fetch_korbit_fee_promo',
     'fetch_okx_perp',
     'fetch_okx_spot',
     'fetch_okx_withdrawal',
@@ -145,6 +147,11 @@ def get_ticker_data(exchange: str) -> dict | list[dict]:
         # 프로모션이 없거나 조회 실패면 None → 정적값 유지(하드코딩 fallback 없음).
         if exchange == 'coinone':
             promo = fetch_coinone_fee_promo()
+            if promo:
+                maker_fee_pct = promo['maker_fee_pct']
+                taker_fee_pct = promo['taker_fee_pct']
+        elif exchange == 'korbit':
+            promo = fetch_korbit_fee_promo()
             if promo:
                 maker_fee_pct = promo['maker_fee_pct']
                 taker_fee_pct = promo['taker_fee_pct']

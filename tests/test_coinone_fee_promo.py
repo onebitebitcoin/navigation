@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import fee_checker
 from backend.app.domain import market_core, path_helpers
 from backend.app.domain.path_graph import korea_buy_leg, korea_sell_leg
-from backend.app.domain.path_helpers import VOUCHER_NOTE, coinone_voucher_note
+from backend.app.domain.path_helpers import COINONE_VOUCHER_NOTE, exchange_fee_promo_note
 from fee_checker import fetch_coinone_fee_promo
 
 
@@ -421,7 +421,7 @@ class TestGetTickerDataFeePromo:
 
 
 # ─────────────────────────────────────────────────────────────
-# 바우처 배지 문구 (coinone_voucher_note)
+# 바우처/이벤트 배지 문구 (exchange_fee_promo_note)
 # ─────────────────────────────────────────────────────────────
 
 class TestCoinoneVoucherNote:
@@ -435,7 +435,7 @@ class TestCoinoneVoucherNote:
         self._stub_promo(monkeypatch, {'taker_fee_pct': 0.0, 'requires_voucher': True})
 
         # Act / Assert
-        assert coinone_voucher_note('coinone') == VOUCHER_NOTE
+        assert exchange_fee_promo_note('coinone') == COINONE_VOUCHER_NOTE
 
     def test_promo_without_voucher_returns_none(self, monkeypatch):
         """바우처 조건이 없는 수수료 인하는 배지를 띄우지 않는다"""
@@ -443,21 +443,21 @@ class TestCoinoneVoucherNote:
         self._stub_promo(monkeypatch, {'taker_fee_pct': 0.04, 'requires_voucher': False})
 
         # Act / Assert
-        assert coinone_voucher_note('coinone') is None
+        assert exchange_fee_promo_note('coinone') is None
 
     def test_no_promo_returns_none(self, monkeypatch):
         # Arrange
         self._stub_promo(monkeypatch, None)
 
         # Act / Assert
-        assert coinone_voucher_note('coinone') is None
+        assert exchange_fee_promo_note('coinone') is None
 
     def test_case_insensitive_exchange(self, monkeypatch):
         # Arrange
         self._stub_promo(monkeypatch, {'requires_voucher': True})
 
         # Act / Assert
-        assert coinone_voucher_note('COINONE') == VOUCHER_NOTE
+        assert exchange_fee_promo_note('COINONE') == COINONE_VOUCHER_NOTE
 
     def test_other_exchange_skips_lookup(self, monkeypatch):
         """코인원이 아니면 파일 캐시를 아예 건드리지 않는다"""
@@ -468,8 +468,8 @@ class TestCoinoneVoucherNote:
         monkeypatch.setattr(path_helpers, 'fetch_coinone_fee_promo', _should_not_be_called)
 
         # Act / Assert
-        assert coinone_voucher_note('upbit') is None
-        assert coinone_voucher_note(None) is None
+        assert exchange_fee_promo_note('upbit') is None
+        assert exchange_fee_promo_note(None) is None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -491,11 +491,11 @@ class TestLegNotePassthrough:
 
     def test_buy_leg_forwards_note(self):
         # Act
-        leg = korea_buy_leg(1_000_000, 0.0, _KRW_PER_BTC, 'BTC', _USD_KRW, note=VOUCHER_NOTE)
+        leg = korea_buy_leg(1_000_000, 0.0, _KRW_PER_BTC, 'BTC', _USD_KRW, note=COINONE_VOUCHER_NOTE)
 
         # Assert
         assert leg.components[0]['label'] == '국내 매수 수수료'
-        assert leg.components[0]['note'] == VOUCHER_NOTE
+        assert leg.components[0]['note'] == COINONE_VOUCHER_NOTE
 
     def test_sell_leg_note_defaults_to_none(self):
         # Act
@@ -506,8 +506,8 @@ class TestLegNotePassthrough:
 
     def test_sell_leg_forwards_note(self):
         # Act
-        leg = korea_sell_leg(1.0, 0.0, _KRW_PER_BTC, 'BTC', _USD_KRW, note=VOUCHER_NOTE)
+        leg = korea_sell_leg(1.0, 0.0, _KRW_PER_BTC, 'BTC', _USD_KRW, note=COINONE_VOUCHER_NOTE)
 
         # Assert
         assert leg.components[0]['label'] == '국내 BTC 매도 수수료'
-        assert leg.components[0]['note'] == VOUCHER_NOTE
+        assert leg.components[0]['note'] == COINONE_VOUCHER_NOTE

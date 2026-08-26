@@ -1429,6 +1429,131 @@ def fetch_coinone_fee_promo() -> Optional[dict]:
         return None
 
 
+# ══════════════════════════════════════════════════════════════
+# 코빗 거래 수수료 프로모션 감지 (1h TTL)
+# ══════════════════════════════════════════════════════════════
+# 코인원과 달리 코빗은 공지 JSON API가 없고 수수료 안내 페이지가 클라이언트
+# 렌더링 SPA라 Playwright로 실제 렌더링해서 본문 텍스트를 파싱해야 한다.
+
+KORBIT_FEE_PAGE_URL = "https://lightning.korbit.co.kr/info/fee/"
+
+# 공지 본문 표기 예: "2026.08.24 09:00 부터 코빗 모든 회원의 거래 수수료가 전면 무료로 적용됩니다."
+KORBIT_FEE_PROMO_PATTERN = re.compile(
+    r"(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})\s*(\d{1,2}):(\d{2})\s*부터\s*"
+    r"코빗\s*모든\s*회원의\s*거래\s*수수료가\s*전면\s*무료로\s*적용"
+)
+
+
+def _parse_korbit_fee_promo(text: str) -> Optional[dict]:
+    """수수료 안내 페이지 본문에서 전면 무료 프로모션 여부를 파싱. 표기가 없거나
+    시작 시각이 아직 도래하지 않았으면 None."""
+    m = KORBIT_FEE_PROMO_PATTERN.search(text or "")
+    if not m:
+        return None
+    year, month, day, hour, minute = (int(g) for g in m.groups())
+    try:
+        starts_at = datetime(year, month, day, hour, minute)
+    except ValueError:
+        return None
+    if datetime.now() < starts_at:
+        return None  # 공지는 있으나 아직 시작 전
+    return {
+        # "전면 무료"는 maker/taker 구분 없는 전체 무료 표기이므로 둘 다 0으로 파싱한다
+        # (임의 fallback이 아니라 본문 문구 자체에서 도출한 값).
+        "maker_fee_pct": 0.0,
+        "taker_fee_pct": 0.0,
+        "requires_voucher": "바우처" in text,
+        "starts_at": starts_at.isoformat(),
+        "source_url": KORBIT_FEE_PAGE_URL,
+    }
+
+
+async def _pw_scrape_korbit_fee_promo(browser) -> Optional[dict]:
+    page = await browser.new_page()
+    try:
+        await page.goto(KORBIT_FEE_PAGE_URL, wait_until="domcontentloaded", timeout=20000)
+        await page.wait_for_timeout(3000)
+        text = await page.evaluate("() => document.body.innerText")
+        return _parse_korbit_fee_promo(text)
+    except Exception:
+        return None
+    finally:
+        await page.close()
+
+
+def _scrape_korbit_fee_promo() -> Optional[dict]:
+    """코빗 수수료 안내 페이지를 Playwright로 렌더링해 진행 중인 프로모션을 조회.
+
+    동기 인터페이스 — 기존 이벤트 루프와 충돌하지 않도록 별도 스레드에서 실행.
+    """
+    container: dict = {}
+
+    async def _run_async():
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            container["result"] = None
+            return
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                container["result"] = await _pw_scrape_korbit_fee_promo(browser)
+            finally:
+                await browser.close()
+
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_run_async())
+        except Exception as e:
+            print(f"[korbit] 수수료 프로모션 스크래핑 실패: {e}", file=sys.stderr)
+            container["result"] = None
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=30)
+    return container.get("result")
+
+
+def fetch_korbit_fee_promo() -> Optional[dict]:
+    """
+    코빗에서 진행 중인 거래 수수료 프로모션의 실제 적용 수수료율을 조회합니다
+    (수수료 안내 페이지를 Playwright로 렌더링해 파싱). 결과는 1시간 TTL로 캐시됩니다.
+
+    Returns:
+        {"maker_fee_pct": 0.0, "taker_fee_pct": 0.0, "requires_voucher": False,
+         "starts_at": "...", "source_url": "...", "checked_at": "..."}
+        진행 중인 프로모션이 없거나 조회/파싱에 실패하면 None.
+        하드코딩 fallback은 두지 않는다 — 근거를 못 찾으면 호출부가 정적 수수료를 쓴다.
+    """
+    try:
+        cache = _load_cache()
+
+        if _is_fee_promo_cache_valid(cache, "korbit"):
+            entry = cache.get("fee_promo", {}).get("korbit", {})
+            return entry if "taker_fee_pct" in entry else None
+
+        try:
+            promo = _scrape_korbit_fee_promo()
+        except Exception as e:
+            print(f"[korbit] 거래 수수료 프로모션 조회 실패: {e}", file=sys.stderr)
+            promo = None
+
+        entry = {**(promo or {}), "checked_at": datetime.now().isoformat()}
+        fee_promo = cache.get("fee_promo", {})
+        fee_promo["korbit"] = entry
+        cache["fee_promo"] = fee_promo
+        _save_cache(cache)
+
+        return entry if promo else None
+    except Exception as e:
+        print(f"[korbit] 거래 수수료 프로모션 캐시 처리 실패: {e}", file=sys.stderr)
+        return None
+
+
 def get_scraped_withdrawal(exchange: str, coin: str) -> list:
     """출금 수수료 반환: 공개 API 또는 스크래핑 결과만 사용. fallback 없음."""
     exchange = exchange.lower()

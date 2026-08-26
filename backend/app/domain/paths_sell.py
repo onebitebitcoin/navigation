@@ -17,7 +17,7 @@ from backend.app.domain.path_graph import (
 )
 from backend.app.domain.path_helpers import (
     _build_path_id,
-    coinone_voucher_note,
+    exchange_fee_promo_note,
     fee_component,
     is_suspended,
 )
@@ -207,7 +207,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
         korean_btc_price_krw = float(ticker_row.price)
         korean_taker = (ticker_row.taker_fee_pct / 100) if ticker_row.taker_fee_pct is not None else TRADING_FEES[exchange]['taker']
         # 거래소당 1회만 조회 (파일 캐시라 경로마다 부르면 디스크를 반복해서 읽는다)
-        voucher_note = coinone_voucher_note(exchange)
+        voucher_note = exchange_fee_promo_note(exchange)
 
         # ----- 경로 1: BTC 직접 (개인지갑 BTC → 온체인 → 국내 BTC 매도) -----
         for row in ctx.withdrawals_by_key.get((exchange, 'BTC'), []):
@@ -322,7 +322,7 @@ def find_cheapest_sell_path_from_snapshot_rows(
                     continue
                 korean_btc_price_krw = float(ticker_row.price)
                 korean_taker = (ticker_row.taker_fee_pct / 100) if ticker_row.taker_fee_pct is not None else TRADING_FEES[exchange]['taker']
-                voucher_note = coinone_voucher_note(exchange)
+                voucher_note = exchange_fee_promo_note(exchange)
 
                 cap = capability_by_exchange.get(exchange)
                 korean_has_lightning = cap.supports_lightning_deposit if cap is not None else False

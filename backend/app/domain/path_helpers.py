@@ -3,29 +3,36 @@ from __future__ import annotations
 
 import logging
 
-from backend.app.domain.market_core import fetch_coinone_fee_promo
+from backend.app.domain.market_core import fetch_coinone_fee_promo, fetch_korbit_fee_promo
 
 logger = logging.getLogger(__name__)
 
 # 바우처 발급이 전제인 수수료 이벤트의 안내 문구 (프론트 배지로 노출).
-VOUCHER_NOTE = '바우처 발급 시 무료 (코인원 이벤트, 앱/웹에서 바우처 발급 필요)'
+COINONE_VOUCHER_NOTE = '바우처 발급 시 무료 (코인원 이벤트, 앱/웹에서 바우처 발급 필요)'
+# 코빗은 바우처 없이 전 회원 자동 적용되는 이벤트라 안내 문구도 그에 맞게 다르다.
+KORBIT_FEE_PROMO_NOTE = '코빗 거래 수수료 전면 무료 이벤트 적용 중 (바우처 불필요, 전 회원 자동 적용)'
 
 
-def coinone_voucher_note(exchange: str | None) -> str | None:
-    """코인원 바우처 조건부 수수료 이벤트 안내 문구. 해당 없으면 None.
+def exchange_fee_promo_note(exchange: str | None) -> str | None:
+    """진행 중인 거래소 수수료 이벤트의 안내 문구. 해당 없으면 None.
 
-    코인원이 '전 종목 거래 수수료 0원'처럼 바우처 발급을 전제로 하는 이벤트를
-    진행 중일 때만 문구를 반환한다. 수수료율 자체는 이미 크롤 시점에 티커로
-    반영되므로, 여기서는 '조건부'라는 사실만 사용자에게 알린다.
+    수수료율 자체는 이미 크롤 시점에 티커로 반영되므로, 여기서는 이벤트가
+    '조건부(바우처 필요)'인지 '자동 적용'인지 등 부가 사실만 사용자에게 알린다.
 
-    fetch_coinone_fee_promo()는 1시간 TTL **파일** 캐시라 호출마다 디스크를 읽는다.
+    fetch_*_fee_promo()는 1시간 TTL **파일** 캐시라 호출마다 디스크를 읽는다.
     경로 후보마다 호출하지 말고 거래소 루프당 1회만 호출해 note를 재사용할 것.
     """
-    if (exchange or '').lower() != 'coinone':
+    ex = (exchange or '').lower()
+    if ex == 'coinone':
+        promo = fetch_coinone_fee_promo()
+        if promo and promo.get('requires_voucher'):
+            return COINONE_VOUCHER_NOTE
         return None
-    promo = fetch_coinone_fee_promo()
-    if promo and promo.get('requires_voucher'):
-        return VOUCHER_NOTE
+    if ex == 'korbit':
+        promo = fetch_korbit_fee_promo()
+        if promo:
+            return KORBIT_FEE_PROMO_NOTE
+        return None
     return None
 
 

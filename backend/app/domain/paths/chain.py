@@ -20,7 +20,7 @@ from backend.app.domain.path_graph import (
     withdraw_leg,
 )
 from backend.app.domain.path_helpers import (
-    coinone_voucher_note,
+    exchange_fee_promo_note,
     is_suspended,
     normalize_usdt_network,
 )
@@ -78,7 +78,7 @@ def iter_btc_entries(
 
     buy = korea_buy_leg(
         bctx.amount_krw, korean_taker, korean_btc_price_krw, 'BTC', ctx.usd_krw_rate,
-        note=coinone_voucher_note(exchange),
+        note=exchange_fee_promo_note(exchange),
     )
 
     for row in ctx.withdrawals_by_key.get((exchange, 'BTC'), []):
@@ -178,7 +178,7 @@ def iter_usdt_entries(
     # USDT 매수 수량만 한국 USDT/KRW 실거래가(원달러 프리미엄 발생 지점). 수수료 환산은 포렉스.
     buy = korea_buy_leg(
         bctx.amount_krw, korean_taker, 0.0, 'USDT', ctx.usdt_buy_krw_rate,
-        note=coinone_voucher_note(exchange),
+        note=exchange_fee_promo_note(exchange),
     )
 
     for row in ctx.withdrawals_by_key.get((exchange, 'USDT'), []):
