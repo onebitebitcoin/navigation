@@ -22,6 +22,7 @@ from backend.app.domain.path_graph import (
 from backend.app.domain.path_helpers import (
     exchange_fee_promo_note,
     is_suspended,
+    korean_usdt_taker_rate,
     normalize_usdt_network,
 )
 from backend.app.domain.korea_exchange_registry import get_withdrawal_limits
@@ -175,10 +176,13 @@ def iter_usdt_entries(
         return
 
     korean_taker = _get_korean_taker(ticker_row, exchange)
+    # 업비트 USDT/KRW 등 원화마켓 스테이블코인 페어 한정 이벤트 — BTC 레그(iter_btc_entries)에는
+    # 적용되지 않으므로 이 함수 안에서만, 이 지역변수에만 덮어쓴다.
+    korean_taker = korean_usdt_taker_rate(exchange, korean_taker)
     # USDT 매수 수량만 한국 USDT/KRW 실거래가(원달러 프리미엄 발생 지점). 수수료 환산은 포렉스.
     buy = korea_buy_leg(
         bctx.amount_krw, korean_taker, 0.0, 'USDT', ctx.usdt_buy_krw_rate,
-        note=exchange_fee_promo_note(exchange),
+        note=exchange_fee_promo_note(exchange, coin='USDT'),
     )
 
     for row in ctx.withdrawals_by_key.get((exchange, 'USDT'), []):

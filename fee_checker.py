@@ -1554,6 +1554,163 @@ def fetch_korbit_fee_promo() -> Optional[dict]:
         return None
 
 
+# ══════════════════════════════════════════════════════════════
+# 업비트 USDT 등 스테이블코인 페어 거래 수수료 프로모션 감지 (1h TTL)
+# ══════════════════════════════════════════════════════════════
+# 코인원/코빗과 달리 이 이벤트는 원화마켓 스테이블코인 페어(USDT/KRW 등)에만 적용되고
+# BTC/KRW에는 적용되지 않는다. 그래서 캐시 키를 exchange가 아닌 "upbit_usdt"로 분리해
+# get_ticker_data()의 BTC 기준 수수료와 절대 섞이지 않도록 한다.
+UPBIT_NOTICE_LIST_URL = "https://www.upbit.com/service_center/notice"
+UPBIT_USDT_PROMO_TITLE_PATTERN = re.compile(r"(스테이블|USDT).*(수수료).*(무료|0%)")
+
+# 상세 페이지는 연장될 때마다 최신 안내가 맨 위에 추가되는 구조라 첫 매치가 최신값이다.
+UPBIT_STABLECOIN_PROMO_PATTERN = re.compile(
+    r"이벤트\s*기간\s*(?:\(변경\))?\s*:\s*.*?~\s*"
+    r"(\d{4})-(\d{2})-(\d{2})\([^)]*\)\s*(\d{2}):(\d{2}):(\d{2})"
+)
+# USDT/KRW 페어가 실제로 0%로 인하 대상에 포함돼 있는지 확인 (제목만으로는 오탐 가능).
+UPBIT_USDT_ZERO_PATTERN = re.compile(r"USDT/KRW\s+[\d.]+%\s*→\s*0(?:\.0+)?%")
+
+
+def _parse_upbit_usdt_fee_promo(text: str) -> Optional[dict]:
+    text = text or ""
+    if not UPBIT_USDT_ZERO_PATTERN.search(text):
+        return None
+    m = UPBIT_STABLECOIN_PROMO_PATTERN.search(text)
+    if not m:
+        return None
+    year, month, day, hour, minute, second = (int(g) for g in m.groups())
+    try:
+        ends_at = datetime(year, month, day, hour, minute, second)
+    except ValueError:
+        return None
+    if datetime.now() > ends_at:
+        return None  # 공지는 있으나 이미 이벤트 기간 종료
+    return {
+        "maker_fee_pct": 0.0,
+        "taker_fee_pct": 0.0,
+        "pairs": ["USDT/KRW"],
+        "ends_at": ends_at.isoformat(),
+    }
+
+
+async def _pw_scrape_upbit_fee_promo(browser) -> Optional[dict]:
+    list_page = await browser.new_page()
+    try:
+        await list_page.goto(UPBIT_NOTICE_LIST_URL, wait_until="domcontentloaded", timeout=20000)
+        await list_page.wait_for_timeout(3000)
+        # "이벤트" 탭 클릭 — 전체 탭은 공지가 너무 많아 페이지 1에 스테이블코인 이벤트가 안 보일 수 있음
+        await list_page.evaluate(
+            """() => {
+                const els = Array.from(document.querySelectorAll('button, a, li, span'));
+                const t = els.find(e => e.textContent.trim() === '이벤트' && e.offsetParent !== null);
+                if (t) t.click();
+            }"""
+        )
+        await list_page.wait_for_timeout(2000)
+        links = await list_page.eval_on_selector_all(
+            "a", "els => els.map(e => ({t: e.innerText.trim(), h: e.href}))"
+        )
+        candidate_url = None
+        for link in links:
+            title = link.get("t", "")
+            if "종료" in title:
+                continue
+            if UPBIT_USDT_PROMO_TITLE_PATTERN.search(title):
+                candidate_url = link.get("h")
+                break
+        if not candidate_url:
+            return None
+
+        detail_page = await browser.new_page()
+        try:
+            await detail_page.goto(candidate_url, wait_until="domcontentloaded", timeout=20000)
+            await detail_page.wait_for_timeout(3000)
+            text = await detail_page.evaluate("() => document.body.innerText")
+            result = _parse_upbit_usdt_fee_promo(text)
+            if result:
+                result["source_url"] = candidate_url
+            return result
+        finally:
+            await detail_page.close()
+    except Exception:
+        return None
+    finally:
+        await list_page.close()
+
+
+def _scrape_upbit_fee_promo() -> Optional[dict]:
+    container: dict = {}
+
+    async def _run_async():
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            container["result"] = None
+            return
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                container["result"] = await _pw_scrape_upbit_fee_promo(browser)
+            finally:
+                await browser.close()
+
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_run_async())
+        except Exception as e:
+            print(f"[upbit] USDT 수수료 프로모션 스크래핑 실패: {e}", file=sys.stderr)
+            container["result"] = None
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=30)
+    return container.get("result")
+
+
+def fetch_upbit_usdt_fee_promo() -> Optional[dict]:
+    """
+    업비트에서 진행 중인 USDT/KRW 등 스테이블코인 페어 한정 거래 수수료 무료 이벤트를
+    조회합니다 (공지사항을 Playwright로 렌더링해 파싱). 결과는 1시간 TTL로 캐시됩니다.
+
+    BTC/KRW에는 적용되지 않는 이벤트이므로 get_ticker_data()가 아니라 USDT 레그를
+    계산하는 호출부(path_helpers.korean_usdt_taker_rate)에서만 사용해야 한다.
+
+    Returns:
+        {"maker_fee_pct": 0.0, "taker_fee_pct": 0.0, "pairs": [...], "ends_at": "...",
+         "source_url": "...", "checked_at": "..."}
+        진행 중인 이벤트가 없거나 조회/파싱에 실패하면 None.
+        하드코딩 fallback은 두지 않는다 — 근거를 못 찾으면 호출부가 정적 수수료를 쓴다.
+    """
+    try:
+        cache = _load_cache()
+
+        if _is_fee_promo_cache_valid(cache, "upbit_usdt"):
+            entry = cache.get("fee_promo", {}).get("upbit_usdt", {})
+            return entry if "taker_fee_pct" in entry else None
+
+        try:
+            promo = _scrape_upbit_fee_promo()
+        except Exception as e:
+            print(f"[upbit] USDT 거래 수수료 프로모션 조회 실패: {e}", file=sys.stderr)
+            promo = None
+
+        entry = {**(promo or {}), "checked_at": datetime.now().isoformat()}
+        fee_promo = cache.get("fee_promo", {})
+        fee_promo["upbit_usdt"] = entry
+        cache["fee_promo"] = fee_promo
+        _save_cache(cache)
+
+        return entry if promo else None
+    except Exception as e:
+        print(f"[upbit] USDT 거래 수수료 프로모션 캐시 처리 실패: {e}", file=sys.stderr)
+        return None
+
+
 def get_scraped_withdrawal(exchange: str, coin: str) -> list:
     """출금 수수료 반환: 공개 API 또는 스크래핑 결과만 사용. fallback 없음."""
     exchange = exchange.lower()

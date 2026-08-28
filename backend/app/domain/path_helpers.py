@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import logging
 
-from backend.app.domain.market_core import fetch_coinone_fee_promo, fetch_korbit_fee_promo
+from backend.app.domain.market_core import (
+    fetch_coinone_fee_promo,
+    fetch_korbit_fee_promo,
+    fetch_upbit_usdt_fee_promo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -11,13 +15,19 @@ logger = logging.getLogger(__name__)
 COINONE_VOUCHER_NOTE = '바우처 발급 시 무료 (코인원 이벤트, 앱/웹에서 바우처 발급 필요)'
 # 코빗은 바우처 없이 전 회원 자동 적용되는 이벤트라 안내 문구도 그에 맞게 다르다.
 KORBIT_FEE_PROMO_NOTE = '코빗 거래 수수료 전면 무료 이벤트 적용 중 (바우처 불필요, 전 회원 자동 적용)'
+# 업비트는 USDT/KRW 등 원화마켓 스테이블코인 페어에만 적용되는 기간 한정 이벤트라
+# BTC 레그에는 절대 붙이면 안 되고, USDT 레그 note 호출부에서만 사용한다.
+UPBIT_USDT_PROMO_NOTE = '업비트 USDT/KRW 등 스테이블코인 페어 거래 수수료 무료 이벤트 적용 중 (원화마켓 한정, 기간 종료 시 자동 해제)'
 
 
-def exchange_fee_promo_note(exchange: str | None) -> str | None:
+def exchange_fee_promo_note(exchange: str | None, coin: str = 'BTC') -> str | None:
     """진행 중인 거래소 수수료 이벤트의 안내 문구. 해당 없으면 None.
 
     수수료율 자체는 이미 크롤 시점에 티커로 반영되므로, 여기서는 이벤트가
     '조건부(바우처 필요)'인지 '자동 적용'인지 등 부가 사실만 사용자에게 알린다.
+
+    coin: 이 note가 붙는 레그의 코인. 업비트 USDT 이벤트처럼 특정 코인에만
+    적용되는 이벤트를 다른 코인 레그에 잘못 붙이지 않기 위해 필요하다.
 
     fetch_*_fee_promo()는 1시간 TTL **파일** 캐시라 호출마다 디스크를 읽는다.
     경로 후보마다 호출하지 말고 거래소 루프당 1회만 호출해 note를 재사용할 것.
@@ -33,7 +43,28 @@ def exchange_fee_promo_note(exchange: str | None) -> str | None:
         if promo:
             return KORBIT_FEE_PROMO_NOTE
         return None
+    if ex == 'upbit' and coin.upper() == 'USDT':
+        promo = fetch_upbit_usdt_fee_promo()
+        if promo:
+            return UPBIT_USDT_PROMO_NOTE
+        return None
     return None
+
+
+def korean_usdt_taker_rate(exchange: str | None, base_taker: float) -> float:
+    """국내 거래소의 USDT 레그 taker rate. base_taker는 _get_korean_taker() 등으로
+    구한 BTC 기준 taker(소수, 예: 0.0005)이고, 업비트 USDT/KRW 이벤트가 활성 중이면
+    0.0으로 대체하고 아니면 base_taker를 그대로 반환한다.
+
+    반드시 USDT 레그를 계산하는 호출부에서만 써야 한다 — BTC 레그의 korean_taker에
+    이 값을 대입하면 BTC/KRW에는 적용되지 않는 이벤트를 잘못 반영하게 된다.
+    """
+    if (exchange or '').lower() != 'upbit':
+        return base_taker
+    promo = fetch_upbit_usdt_fee_promo()
+    if promo:
+        return promo['taker_fee_pct'] / 100
+    return base_taker
 
 
 def normalize_usdt_network(label: str) -> str:

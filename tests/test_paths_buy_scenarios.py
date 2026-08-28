@@ -650,8 +650,10 @@ def test_coinone_buy_fee_carries_voucher_note():
     ]
     promo = {"taker_fee_pct": 0.0, "requires_voucher": True}
 
-    # Act
-    with patch("backend.app.domain.path_helpers.fetch_coinone_fee_promo", return_value=promo):
+    # Act — 업비트는 이 테스트의 관심사가 아니므로 실제 USDT 이벤트 상태와 무관하게
+    # None으로 고정해 격리한다 (코인원 note 전파만 검증하는 테스트).
+    with patch("backend.app.domain.path_helpers.fetch_coinone_fee_promo", return_value=promo), \
+         patch("backend.app.domain.path_helpers.fetch_upbit_usdt_fee_promo", return_value=None):
         result = find_cheapest_path_from_snapshot_rows(
             amount_krw=10_000_000,
             global_exchange="binance",
